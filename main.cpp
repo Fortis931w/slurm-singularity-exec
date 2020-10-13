@@ -19,9 +19,8 @@
 
 #include <cstring>
 #include <exception>
-#include <optional>
 #include <string>
-#include <string_view>
+#include <tuple>
 #include <unistd.h>
 #include <utility>
 #include <vector>
@@ -31,9 +30,9 @@ extern "C"
 #include "spank.h"
 }
 
-/// string_view::starts_with replacement
+/// string::starts_with replacement
 bool
-starts_with(const std::string_view& s, const std::string_view& prefix)
+starts_with(const std::string& s, const std::string& prefix)
 {
   if (prefix.length() > s.length())
     return false;
@@ -44,7 +43,7 @@ starts_with(const std::string_view& s, const std::string_view& prefix)
 /**
  * A type to wrap (argc, argv) into a proper container.
  */
-class ArgumentVector : public std::vector<std::string_view>
+class ArgumentVector : public std::vector<std::string>
 {
 public:
   ArgumentVector(const int n, char* args[])
@@ -136,7 +135,9 @@ public:
   std::vector<char*>
   job_argument_vector() const
   {
-    auto [n, args] = job_arguments();
+    int n;
+    char** args;
+    std::tie(n, args) = job_arguments();
     std::vector<char*> r;
     r.reserve(n);
     for (int i = 0; i < n; ++i)
@@ -154,16 +155,16 @@ public:
   }
 
   /// Get environment variable
-  std::optional<std::string>
+  std::pair<bool, std::string>
   getenv(const char* var)
   {
     constexpr int size = 1024;
     char buf[size];
     auto err = spank_getenv(handle, var, buf, size);
     if (err == ESPANK_ENV_NOEXIST)
-      return std::nullopt;
+      return {false, {}};
     throw_on_error(err);
-    return buf;
+    return {true, buf};
   }
 
   /// Set environment variable
@@ -207,13 +208,13 @@ public:
  */
 struct singularity_exec
 {
-  inline static std::string s_container_name = {};
-  inline static std::string s_singularity_script = "/usr/lib/slurm/slurm-singularity-wrapper.sh";
-  inline static std::string s_singularity_args = {};
-  inline static std::string s_bind_defaults = {};
-  inline static std::string s_bind_mounts = {};
-  inline static bool s_no_args_option = false;
-  inline static bool s_default_container = true;
+  static std::string s_container_name;
+  static std::string s_singularity_script;
+  static std::string s_singularity_args;
+  static std::string s_bind_defaults;
+  static std::string s_bind_mounts;
+  static bool s_no_args_option;
+  static bool s_default_container;
 
   template <typename F0, typename F1>
   static int
@@ -228,13 +229,8 @@ struct singularity_exec
         return -1;
       }
     already_called = true;
-    if constexpr (std::is_same_v<decltype(on_success()), void>)
-      {
-        on_success();
-        return 0;
-      }
-    else
-      return on_success();
+    on_success();
+    return 0;
   }
 
   /// Set container name from --singularity-container
@@ -305,7 +301,7 @@ struct singularity_exec
     try
       {
         bool in_args = false;
-        for (std::string_view arg : args)
+        for (std::string arg : args)
           {
             slurm_debug("singularity-exec argument: %s", arg.data());
             if (in_args)
@@ -313,7 +309,7 @@ struct singularity_exec
                 if (arg.back() == '"')
                   {
                     in_args = false;
-                    arg.remove_suffix(1);
+                    arg = arg.substr(0, arg.length() - 1);
                   }
                 (s_singularity_args += ' ') += arg;
               }
@@ -327,9 +323,9 @@ struct singularity_exec
               s_no_args_option = true;
             else if (starts_with(arg, "args=\""))
               {
-                arg.remove_prefix(6);
+                arg = arg.substr(6);
                 if (arg.back() == '"')
-                  arg.remove_suffix(1);
+                  arg = arg.substr(0, arg.length() - 1);
                 else
                   in_args = true;
                 s_singularity_args = arg;
@@ -400,8 +396,8 @@ struct singularity_exec
         if (s_default_container)
           { // check SLURM_SINGULARITY_CONTAINER env var
             auto env = s.getenv("SLURM_SINGULARITY_CONTAINER");
-            if (env)
-              s_container_name = std::move(env).value();
+            if (env.first)
+              s_container_name = std::move(env.second);
           }
         if (s_container_name.empty() || s_singularity_script.empty())
           {
@@ -413,8 +409,8 @@ struct singularity_exec
         if (s_bind_mounts.empty())
           {
             auto env = s.getenv("SLURM_SINGULARITY_BIND");
-            if (env)
-              s_bind_mounts = std::move(env).value();
+            if (env.first)
+              s_bind_mounts = std::move(env.second);
           }
         if (!s_bind_defaults.empty())
           {
@@ -429,8 +425,8 @@ struct singularity_exec
         s.setenv("SLURM_SINGULARITY_BIND", s_bind_mounts.c_str());
         s.setenv("SLURM_SINGULARITY_ARGS", s_singularity_args.c_str());
         std::vector<char*> argv = s.job_argument_vector();
-        argv.insert(argv.begin(),
-                    { s_singularity_script.data(), s_container_name.data() });
+        argv.insert(argv.begin(), { &s_singularity_script.front(),
+                                    &s_container_name.front() });
         argv.push_back(nullptr);
         if (-1
             == execvpe(s_singularity_script.c_str(), argv.data(), s.job_env()))
@@ -449,6 +445,13 @@ struct singularity_exec
       }
   }
 };
+std::string singularity_exec::s_container_name = {};
+std::string singularity_exec::s_singularity_script = "/usr/lib/slurm/slurm-singularity-wrapper.sh";
+std::string singularity_exec::s_singularity_args = {};
+std::string singularity_exec::s_bind_defaults = {};
+std::string singularity_exec::s_bind_mounts = {};
+bool singularity_exec::s_no_args_option = false;
+bool singularity_exec::s_default_container = true;
 
 extern "C"
 { // SPANK plugin interface
