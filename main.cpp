@@ -466,7 +466,7 @@ extern "C"
 
   extern const char plugin_name[] = "singularity-exec";
   extern const char plugin_type[] = "spank";
-  extern const unsigned int plugin_version = 0;
+  extern const unsigned int plugin_version = SLURM_VERSION_NUMBER;
 }
 
 // vim: foldmethod=marker foldmarker={,} sw=2 et

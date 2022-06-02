@@ -7,7 +7,9 @@ test:
 	echo $(libdir) $(etcdir)
 
 singularity-exec.so: main.cpp Makefile
-	$(CXX) -std=c++17 -O2 -Wall -Wextra -fpic -shared -static-libstdc++ -static-libgcc -o $@ $<
+	g++ -I/usr/include/slurm -std=c++17 -O2 -Wall -o singularity-exec.o -fPIC -c main.cpp
+	g++ -shared -o singularity-exec.so singularity-exec.o
+
 
 prepare-plugstack-conf:
 	mkdir -p $(etcdir)/plugstack.conf.d
